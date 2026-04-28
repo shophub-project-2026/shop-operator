@@ -1,0 +1,43 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Go
+vendor/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dependencies
+
+# Build artifacts
+coverage.out
+coverage.html
+
+# IDEs
+.idea/
+*.iml
+.DS_Store
+
+# Kubernetes
+kubeconfig
+
+# Generated files
+zz_generated.*.go
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE specific
+*.code-workspace
+
