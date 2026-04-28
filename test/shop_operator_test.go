@@ -1,15 +1,12 @@
 package test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/devops-milos/shop-operator/api/v1alpha1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestShopOperator(t *testing.T) {
@@ -18,10 +15,8 @@ func TestShopOperator(t *testing.T) {
 }
 
 var _ = ginkgo.Describe("Shop CRD", func() {
-	var ctx context.Context
-
 	ginkgo.BeforeEach(func() {
-		ctx = context.Background()
+		// Setup for each test
 	})
 
 	ginkgo.It("should create a valid Shop resource", func() {
