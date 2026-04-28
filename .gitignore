@@ -17,7 +17,6 @@ vendor/
 *~
 
 # Dependencies
-go.sum
 
 # Build artifacts
 coverage.out
