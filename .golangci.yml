@@ -1,13 +1,11 @@
-version: '3'
+version: '2'
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - gocritic
-    - gofmt
-    - goimports
     - goprintffuncname
-    - gosimple
+    - staticcheck
     - govet
     - ineffassign
     - lll
@@ -16,11 +14,16 @@ linters:
     - nolintlint
     - unused
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - lll
-    - text: "weak cryptography"
-      linters:
-        - gosec
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - lll
+      - text: "weak cryptography"
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -62,8 +62,8 @@ type ShopStatus struct {
 func (s *Shop) DeepCopyInto(out *Shop) {
 	*out = *s
 	s.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	s.Spec = s.Spec
-	s.Status = s.Status
+	out.Spec = s.Spec
+	out.Status = s.Status
 }
 
 func (s *Shop) DeepCopy() *Shop {

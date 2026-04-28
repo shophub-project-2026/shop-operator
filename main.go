@@ -1,9 +1,10 @@
 package main
 
 import (
+	"os"
+
 	"github.com/devops-milos/shop-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
