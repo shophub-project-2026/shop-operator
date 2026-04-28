@@ -1,0 +1,27 @@
+version: '3'
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gocritic
+    - gofmt
+    - goimports
+    - goprintffuncname
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - nolintlint
+    - typecheck
+    - unused
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - lll
+    - text: "weak cryptography"
+      linters:
+        - gosec
