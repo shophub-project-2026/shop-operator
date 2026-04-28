@@ -1,0 +1,33 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+#
+# Type of change (required):
+#   - feat: new feature
+#   - fix: bug fix
+#   - docs: documentation
+#   - style: formatting, missing semicolons, etc.
+#   - refactor: code refactoring
+#   - perf: performance improvement
+#   - test: adding or updating tests
+#   - chore: changes to build process, dependencies, etc.
+#   - ci: changes to CI configuration
+#
+# Scope (optional): the area of the codebase affected
+#
+# Subject (required):
+#   - use imperative, present tense
+#   - don't capitalize
+#   - no period at the end
+#   - max 50 characters
+#
+# Body (optional):
+#   - explain what and why, not how
+#   - wrap at 72 characters
+#   - separate from subject with a blank line
+#
+# Footer (optional):
+#   - reference GitHub issues: Closes #123
+#   - breaking changes: BREAKING CHANGE: description
