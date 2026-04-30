@@ -2,7 +2,7 @@
 
 # Variables
 OPERATOR_NAME := shop-operator
-IMG_NAME := devops/$(OPERATOR_NAME)
+IMG_NAME := milos2002/$(OPERATOR_NAME)
 VERSION ?= $(shell git describe --tags --always --dirty)
 IMG_TAG := $(IMG_NAME):$(VERSION)
 
