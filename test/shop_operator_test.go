@@ -15,11 +15,7 @@ func TestShopOperator(t *testing.T) {
 }
 
 var _ = ginkgo.Describe("Shop CRD", func() {
-	ginkgo.BeforeEach(func() {
-		// Setup for each test
-	})
-
-	ginkgo.It("should create a valid Shop resource", func() {
+	ginkgo.It("should create a valid Shop resource with standard availability", func() {
 		shop := &v1alpha1.Shop{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shop",
@@ -38,7 +34,7 @@ var _ = ginkgo.Describe("Shop CRD", func() {
 		gomega.Expect(shop.Spec.Database).To(gomega.Equal("standard"))
 	})
 
-	ginkgo.It("should validate Shop with high availability", func() {
+	ginkgo.It("should create a valid Shop resource with high availability", func() {
 		shop := &v1alpha1.Shop{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "high-availability-shop",
@@ -46,7 +42,7 @@ var _ = ginkgo.Describe("Shop CRD", func() {
 			},
 			Spec: v1alpha1.ShopSpec{
 				Availability:  "high",
-				WalletAddress: "0xABCDEF123456",
+				WalletAddress: "0xABCDEF123456789012345678901234567890ABCD",
 				Database:      "light",
 			},
 		}
@@ -55,6 +51,18 @@ var _ = ginkgo.Describe("Shop CRD", func() {
 		gomega.Expect(shop.Spec.Database).To(gomega.Equal("light"))
 	})
 
+	ginkgo.It("should default to standard database when database field is empty", func() {
+		shop := &v1alpha1.Shop{
+			ObjectMeta: metav1.ObjectMeta{Name: "default-db-shop", Namespace: "default"},
+			Spec: v1alpha1.ShopSpec{
+				WalletAddress: "0x0000000000000000000000000000000000000001",
+			},
+		}
+		gomega.Expect(shop.Spec.Database).To(gomega.BeEmpty())
+	})
+})
+
+var _ = ginkgo.Describe("DiscordChannel CRD", func() {
 	ginkgo.It("should create a valid DiscordChannel resource", func() {
 		channel := &v1alpha1.DiscordChannel{
 			ObjectMeta: metav1.ObjectMeta{
@@ -62,19 +70,22 @@ var _ = ginkgo.Describe("Shop CRD", func() {
 				Namespace: "default",
 			},
 			Spec: v1alpha1.DiscordChannelSpec{
-				WebhookURL:  "https://discordapp.com/api/webhooks/123456/abcdef",
+				WebhookURL:  "https://discord.com/api/webhooks/123456/abcdef",
 				ChannelName: "shop-notifications",
 			},
 		}
 
 		gomega.Expect(channel).ToNot(gomega.BeNil())
 		gomega.Expect(channel.Spec.ChannelName).To(gomega.Equal("shop-notifications"))
+		gomega.Expect(channel.Spec.WebhookURL).To(gomega.ContainSubstring("discord.com"))
 	})
+})
 
-	ginkgo.It("should create a valid Wallet resource", func() {
+var _ = ginkgo.Describe("Wallet CRD", func() {
+	ginkgo.It("should create a valid Ethereum wallet resource", func() {
 		wallet := &v1alpha1.Wallet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-wallet",
+				Name:      "eth-wallet",
 				Namespace: "default",
 			},
 			Spec: v1alpha1.WalletSpec{
@@ -88,5 +99,20 @@ var _ = ginkgo.Describe("Shop CRD", func() {
 		gomega.Expect(wallet).ToNot(gomega.BeNil())
 		gomega.Expect(wallet.Spec.Blockchain).To(gomega.Equal("ethereum"))
 		gomega.Expect(wallet.Spec.Network).To(gomega.Equal("testnet"))
+	})
+
+	ginkgo.It("should create a valid Solana wallet resource", func() {
+		wallet := &v1alpha1.Wallet{
+			ObjectMeta: metav1.ObjectMeta{Name: "sol-wallet", Namespace: "default"},
+			Spec: v1alpha1.WalletSpec{
+				Address:    "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+				Blockchain: "solana",
+				Network:    "devnet",
+				Currency:   "SOL",
+			},
+		}
+
+		gomega.Expect(wallet.Spec.Blockchain).To(gomega.Equal("solana"))
+		gomega.Expect(wallet.Spec.Network).To(gomega.Equal("devnet"))
 	})
 })
