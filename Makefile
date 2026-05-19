@@ -16,7 +16,11 @@ build-local: ## Build operator binary for local development
 	go build -o bin/manager-local main.go
 
 test: ## Run unit tests
-	go test -v -race -coverprofile=coverage.out ./...
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+test-race: ## Run unit tests with race detector (requires CGO/Linux)
+	CGO_ENABLED=1 go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 test-integration: ## Run integration tests with TestContainers

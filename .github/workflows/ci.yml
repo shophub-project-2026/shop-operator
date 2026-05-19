@@ -60,7 +60,7 @@ jobs:
         run: make build
 
       - name: Run unit tests
-        run: make test
+        run: make test-race
 
       - name: Run integration tests
         run: make test-integration
