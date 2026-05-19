@@ -8,7 +8,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -50,6 +52,10 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := r.reconcileService(ctx, shop); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile service: %w", err)
+	}
+
+	if err := r.reconcileDatabase(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile database: %w", err)
 	}
 
 	return ctrl.Result{}, nil
@@ -147,6 +153,102 @@ func (r *ShopReconciler) reconcileService(ctx context.Context, shop *v1alpha1.Sh
 	existing.Spec.Selector = desired.Spec.Selector
 	existing.Spec.Ports = desired.Spec.Ports
 	return r.Update(ctx, existing)
+}
+
+func (r *ShopReconciler) reconcileDatabase(ctx context.Context, shop *v1alpha1.Shop) error {
+	if shop.Spec.Database == "light" {
+		return r.reconcileRedisDB(ctx, shop)
+	}
+	return r.reconcilePostgresCluster(ctx, shop)
+}
+
+// reconcilePostgresCluster creates a CNPG Cluster resource for the standard database tier.
+// Uses unstructured to avoid importing the CNPG Go client as a direct dependency.
+func (r *ShopReconciler) reconcilePostgresCluster(ctx context.Context, shop *v1alpha1.Shop) error {
+	gvk := schema.GroupVersionKind{
+		Group:   "postgresql.cnpg.io",
+		Version: "v1",
+		Kind:    "Cluster",
+	}
+
+	ownerRef := metav1.NewControllerRef(shop, v1alpha1.SchemeGroupVersion.WithKind("Shop"))
+	desired := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "postgresql.cnpg.io/v1",
+			"kind":       "Cluster",
+			"metadata": map[string]interface{}{
+				"name":            shop.Name + "-db",
+				"namespace":       shop.Namespace,
+				"ownerReferences": []interface{}{ownerRefToMap(ownerRef)},
+			},
+			"spec": map[string]interface{}{
+				"instances": int64(1),
+				"storage": map[string]interface{}{
+					"size": "1Gi",
+				},
+			},
+		},
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(gvk)
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      shop.Name + "-db",
+		Namespace: shop.Namespace,
+	}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	return err
+}
+
+// reconcileRedisDB creates a Redis Enterprise Database resource for the light database tier.
+// Uses unstructured to avoid importing the REDB operator Go client as a direct dependency.
+func (r *ShopReconciler) reconcileRedisDB(ctx context.Context, shop *v1alpha1.Shop) error {
+	gvk := schema.GroupVersionKind{
+		Group:   "app.redislabs.com",
+		Version: "v1alpha1",
+		Kind:    "RedisEnterpriseDatabase",
+	}
+
+	ownerRef := metav1.NewControllerRef(shop, v1alpha1.SchemeGroupVersion.WithKind("Shop"))
+	desired := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "app.redislabs.com/v1alpha1",
+			"kind":       "RedisEnterpriseDatabase",
+			"metadata": map[string]interface{}{
+				"name":            shop.Name + "-redis",
+				"namespace":       shop.Namespace,
+				"ownerReferences": []interface{}{ownerRefToMap(ownerRef)},
+			},
+			"spec": map[string]interface{}{
+				"memorySize": "100MB",
+			},
+		},
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(gvk)
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      shop.Name + "-redis",
+		Namespace: shop.Namespace,
+	}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	return err
+}
+
+func ownerRefToMap(ref *metav1.OwnerReference) map[string]interface{} {
+	isController := ref.Controller != nil && *ref.Controller
+	return map[string]interface{}{
+		"apiVersion":         ref.APIVersion,
+		"kind":               ref.Kind,
+		"name":               ref.Name,
+		"uid":                string(ref.UID),
+		"controller":         isController,
+		"blockOwnerDeletion": ref.BlockOwnerDeletion != nil && *ref.BlockOwnerDeletion,
+	}
 }
 
 func shopLabels(name string) map[string]string {
