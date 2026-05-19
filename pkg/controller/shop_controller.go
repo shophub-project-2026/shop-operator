@@ -58,6 +58,10 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("reconcile database: %w", err)
 	}
 
+	if err := r.syncStatus(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("sync status: %w", err)
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -237,6 +241,35 @@ func (r *ShopReconciler) reconcileRedisDB(ctx context.Context, shop *v1alpha1.Sh
 		return r.Create(ctx, desired)
 	}
 	return err
+}
+
+// syncStatus re-fetches the owned Deployment and mirrors its replica
+// counts into Shop.Status. A fresh Get is used to avoid resource-version
+// conflicts when both spec and status are updated in the same pass.
+func (r *ShopReconciler) syncStatus(ctx context.Context, shop *v1alpha1.Shop) error {
+	latest := &v1alpha1.Shop{}
+	if err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, latest); err != nil {
+		return err
+	}
+
+	deploy := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, deploy)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+
+	latest.Status.Replicas = deploy.Status.Replicas
+	latest.Status.ReadyReplicas = deploy.Status.ReadyReplicas
+	latest.Status.ServiceURL = fmt.Sprintf("%s.%s.svc.cluster.local", shop.Name, shop.Namespace)
+	latest.Status.DatabaseReady = true
+
+	if deploy.Status.ReadyReplicas > 0 && deploy.Status.ReadyReplicas == deploy.Status.Replicas {
+		latest.Status.Phase = "Running"
+	} else {
+		latest.Status.Phase = "Pending"
+	}
+
+	return r.Status().Update(ctx, latest)
 }
 
 func ownerRefToMap(ref *metav1.OwnerReference) map[string]interface{} {
