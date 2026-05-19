@@ -35,7 +35,10 @@ func registerWallet(scheme *runtime.Scheme) error {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
 
 type Shop struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -113,6 +116,8 @@ func (sl *ShopList) DeepCopyObject() runtime.Object {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 
 type DiscordChannel struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -183,6 +188,9 @@ func (dcl *DiscordChannelList) DeepCopyObject() runtime.Object {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Blockchain",type=string,JSONPath=`.spec.blockchain`
 
 type Wallet struct {
 	metav1.TypeMeta   `json:",inline"`

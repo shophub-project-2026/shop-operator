@@ -16,7 +16,11 @@ build-local: ## Build operator binary for local development
 	go build -o bin/manager-local main.go
 
 test: ## Run unit tests
-	go test -v -race -coverprofile=coverage.out ./...
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+test-race: ## Run unit tests with race detector (requires CGO/Linux)
+	CGO_ENABLED=1 go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 test-integration: ## Run integration tests with TestContainers
@@ -43,9 +47,8 @@ docker-push: ## Push Docker image to registry
 
 docker-build-push: docker-build docker-push ## Build and push Docker image
 
-generate: ## Generate CRDs and manifests
-	controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
-	controller-gen crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
-	controller-gen rbac:roleName=shop-operator paths="./pkg/controller/..."
+generate: ## Generate CRDs and RBAC manifests
+	controller-gen crd paths="./api/v1alpha1/..." output:crd:artifacts:config=config/crd/bases
+	controller-gen rbac:roleName=shop-operator paths="./pkg/controller/..." output:rbac:artifacts:config=config/manager
 
 manager: build ## Alias for build target
