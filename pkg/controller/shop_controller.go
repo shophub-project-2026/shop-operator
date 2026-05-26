@@ -6,6 +6,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -14,10 +15,22 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/devops-milos/shop-operator/api/v1alpha1"
+)
+
+const (
+	defaultShopImage = "milos2002/shop:development"
+	shopHTTPPort     = 8080
+	dbStorageStd     = "1Gi"
+	dbStorageLight   = "256Mi"
+	ingressClassName = "nginx"
 )
 
 type ShopReconciler struct {
@@ -26,10 +39,21 @@ type ShopReconciler struct {
 }
 
 func (r *ShopReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	cnpgSecretPred := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		_, has := obj.GetLabels()["cnpg.io/cluster"]
+		return has
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Shop{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.Ingress{}).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findShopsForSecret),
+			builder.WithPredicates(cnpgSecretPred),
+		).
 		Complete(r)
 }
 
@@ -46,6 +70,22 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	logger.Info("Reconciling Shop", "name", shop.Name, "namespace", shop.Namespace)
 
+	if err := r.reconcileDatabase(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile database: %w", err)
+	}
+
+	secretReady, err := r.dbSecretReady(ctx, shop)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check db secret: %w", err)
+	}
+	if !secretReady {
+		logger.Info("Database secret not ready yet, waiting", "shop", shop.Name)
+		if err := r.syncStatus(ctx, shop, false); err != nil {
+			logger.Error(err, "sync status while waiting for db")
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.reconcileDeployment(ctx, shop); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile deployment: %w", err)
 	}
@@ -54,11 +94,11 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("reconcile service: %w", err)
 	}
 
-	if err := r.reconcileDatabase(ctx, shop); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconcile database: %w", err)
+	if err := r.reconcileIngress(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile ingress: %w", err)
 	}
 
-	if err := r.syncStatus(ctx, shop); err != nil {
+	if err := r.syncStatus(ctx, shop, true); err != nil {
 		return ctrl.Result{}, fmt.Errorf("sync status: %w", err)
 	}
 
@@ -73,28 +113,83 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 
 	image := shop.Spec.Image
 	if image == "" {
-		image = "nginx:stable-alpine"
+		image = defaultShopImage
 	}
 
 	labels := shopLabels(shop.Name)
+	dbSecret := dbSecretName(shop.Name)
+
+	envFromSecret := func(name, key string) corev1.EnvVar {
+		return corev1.EnvVar{
+			Name: name,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: dbSecret},
+					Key:                  key,
+				},
+			},
+		}
+	}
 
 	desired := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      shop.Name,
 			Namespace: shop.Namespace,
+			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+					Annotations: map[string]string{
+						"prometheus.io/scrape": "true",
+						"prometheus.io/port":   fmt.Sprintf("%d", shopHTTPPort),
+						"prometheus.io/path":   "/metrics",
+					},
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "shop",
-							Image: image,
+							Name:            "shop",
+							Image:           image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
 							Ports: []corev1.ContainerPort{
-								{ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+								{Name: "http", ContainerPort: shopHTTPPort, Protocol: corev1.ProtocolTCP},
+							},
+							Env: []corev1.EnvVar{
+								{Name: "SHOP_HTTP_ADDR", Value: fmt.Sprintf(":%d", shopHTTPPort)},
+								{Name: "SHOP_ENV", Value: "production"},
+								{Name: "SHOP_LOG_LEVEL", Value: "info"},
+								envFromSecret("SHOP_DB_HOST", "host"),
+								envFromSecret("SHOP_DB_PORT", "port"),
+								envFromSecret("SHOP_DB_NAME", "dbname"),
+								envFromSecret("SHOP_DB_USER", "username"),
+								envFromSecret("SHOP_DB_PASSWORD", "password"),
+								{Name: "SHOP_ADMIN_KEY", Value: "admin-" + shop.Name},
+								{Name: "SHOP_ETH_WALLET", Value: shop.Spec.WalletAddress},
+								{Name: "SHOP_ETH_RPC_URL", Value: "https://rpc.sepolia.org"},
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(shopHTTPPort),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(shopHTTPPort),
+									},
+								},
+								InitialDelaySeconds: 15,
+								PeriodSeconds:       20,
 							},
 						},
 					},
@@ -116,25 +211,28 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 		return err
 	}
 
+	existing.Labels = desired.Labels
 	existing.Spec.Replicas = desired.Spec.Replicas
 	existing.Spec.Template = desired.Spec.Template
 	return r.Update(ctx, existing)
 }
 
 func (r *ShopReconciler) reconcileService(ctx context.Context, shop *v1alpha1.Shop) error {
+	labels := shopLabels(shop.Name)
 	desired := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      shop.Name,
 			Namespace: shop.Namespace,
+			Labels:    labels,
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": shop.Name},
+			Selector: labels,
 			Type:     corev1.ServiceTypeClusterIP,
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "http",
 					Port:       80,
-					TargetPort: intstr.FromInt(8080),
+					TargetPort: intstr.FromInt(shopHTTPPort),
 					Protocol:   corev1.ProtocolTCP,
 				},
 			},
@@ -154,20 +252,74 @@ func (r *ShopReconciler) reconcileService(ctx context.Context, shop *v1alpha1.Sh
 		return err
 	}
 
+	existing.Labels = desired.Labels
 	existing.Spec.Selector = desired.Spec.Selector
 	existing.Spec.Ports = desired.Spec.Ports
 	return r.Update(ctx, existing)
 }
 
-func (r *ShopReconciler) reconcileDatabase(ctx context.Context, shop *v1alpha1.Shop) error {
-	if shop.Spec.Database == "light" {
-		return r.reconcileRedisDB(ctx, shop)
+func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Shop) error {
+	className := ingressClassName
+	pathType := networkingv1.PathTypePrefix
+	host := shop.Name + ".local"
+
+	desired := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      shop.Name,
+			Namespace: shop.Namespace,
+			Labels:    shopLabels(shop.Name),
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &className,
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathType,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: shop.Name,
+											Port: networkingv1.ServiceBackendPort{Number: 80},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
+
+	if err := ctrl.SetControllerReference(shop, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on ingress: %w", err)
+	}
+
+	existing := &networkingv1.Ingress{}
+	err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	existing.Labels = desired.Labels
+	existing.Spec = desired.Spec
+	return r.Update(ctx, existing)
+}
+
+func (r *ShopReconciler) reconcileDatabase(ctx context.Context, shop *v1alpha1.Shop) error {
 	return r.reconcilePostgresCluster(ctx, shop)
 }
 
-// reconcilePostgresCluster creates a CNPG Cluster resource for the standard database tier.
-// Uses unstructured to avoid importing the CNPG Go client as a direct dependency.
+// reconcilePostgresCluster creates a CNPG Cluster with bootstrap so that CNPG
+// creates an application database, role, and a Secret named <cluster>-app
+// containing host/port/username/password/dbname keys.
 func (r *ShopReconciler) reconcilePostgresCluster(ctx context.Context, shop *v1alpha1.Shop) error {
 	gvk := schema.GroupVersionKind{
 		Group:   "postgresql.cnpg.io",
@@ -175,78 +327,115 @@ func (r *ShopReconciler) reconcilePostgresCluster(ctx context.Context, shop *v1a
 		Kind:    "Cluster",
 	}
 
+	storage := dbStorageStd
+	if shop.Spec.Database == "light" {
+		storage = dbStorageLight
+	}
+
 	ownerRef := metav1.NewControllerRef(shop, v1alpha1.SchemeGroupVersion.WithKind("Shop"))
+	clusterName := dbClusterName(shop.Name)
 	desired := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "postgresql.cnpg.io/v1",
 			"kind":       "Cluster",
 			"metadata": map[string]interface{}{
-				"name":            shop.Name + "-db",
+				"name":            clusterName,
 				"namespace":       shop.Namespace,
 				"ownerReferences": []interface{}{ownerRefToMap(ownerRef)},
+				"labels":          shopLabels(shop.Name),
 			},
 			"spec": map[string]interface{}{
 				"instances": int64(1),
+				"bootstrap": map[string]interface{}{
+					"initdb": map[string]interface{}{
+						"database": "shop_db",
+						"owner":    "shop_user",
+					},
+				},
 				"storage": map[string]interface{}{
-					"size": "1Gi",
+					"size": storage,
 				},
 			},
 		},
 	}
+	desired.SetGroupVersionKind(gvk)
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(gvk)
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      shop.Name + "-db",
+		Name:      clusterName,
 		Namespace: shop.Namespace,
 	}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Patch only fields we own (instances, storage) so CNPG-managed status stays intact.
+	spec, ok := existing.Object["spec"].(map[string]interface{})
+	if !ok {
+		spec = map[string]interface{}{}
+	}
+	spec["instances"] = int64(1)
+	if storageSpec, ok := spec["storage"].(map[string]interface{}); ok {
+		storageSpec["size"] = storage
+	} else {
+		spec["storage"] = map[string]interface{}{"size": storage}
+	}
+	existing.Object["spec"] = spec
+	return r.Update(ctx, existing)
 }
 
-// reconcileRedisDB creates a Redis Enterprise Database resource for the light database tier.
-// Uses unstructured to avoid importing the REDB operator Go client as a direct dependency.
-func (r *ShopReconciler) reconcileRedisDB(ctx context.Context, shop *v1alpha1.Shop) error {
-	gvk := schema.GroupVersionKind{
-		Group:   "app.redislabs.com",
-		Version: "v1alpha1",
-		Kind:    "RedisEnterpriseDatabase",
-	}
-
-	ownerRef := metav1.NewControllerRef(shop, v1alpha1.SchemeGroupVersion.WithKind("Shop"))
-	desired := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "app.redislabs.com/v1alpha1",
-			"kind":       "RedisEnterpriseDatabase",
-			"metadata": map[string]interface{}{
-				"name":            shop.Name + "-redis",
-				"namespace":       shop.Namespace,
-				"ownerReferences": []interface{}{ownerRefToMap(ownerRef)},
-			},
-			"spec": map[string]interface{}{
-				"memorySize": "100MB",
-			},
-		},
-	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(gvk)
+// dbSecretReady returns true when the CNPG-managed application Secret exists.
+func (r *ShopReconciler) dbSecretReady(ctx context.Context, shop *v1alpha1.Shop) (bool, error) {
+	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      shop.Name + "-redis",
+		Name:      dbSecretName(shop.Name),
 		Namespace: shop.Namespace,
-	}, existing)
+	}, secret)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
+		return false, nil
 	}
-	return err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// syncStatus re-fetches the owned Deployment and mirrors its replica
-// counts into Shop.Status. A fresh Get is used to avoid resource-version
-// conflicts when both spec and status are updated in the same pass.
-func (r *ShopReconciler) syncStatus(ctx context.Context, shop *v1alpha1.Shop) error {
+// findShopsForSecret maps a CNPG-managed Secret change back to the owning Shop
+// so the reconcile loop fires when database credentials are created/rotated.
+func (r *ShopReconciler) findShopsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	clusterLabel, ok := secret.GetLabels()["cnpg.io/cluster"]
+	if !ok {
+		return nil
+	}
+
+	shopName, ok := shopNameFromClusterLabel(clusterLabel)
+	if !ok {
+		return nil
+	}
+
+	shop := &v1alpha1.Shop{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      shopName,
+		Namespace: secret.Namespace,
+	}, shop); err != nil {
+		return nil
+	}
+
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace},
+	}}
+}
+
+func (r *ShopReconciler) syncStatus(ctx context.Context, shop *v1alpha1.Shop, dbReady bool) error {
 	latest := &v1alpha1.Shop{}
 	if err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, latest); err != nil {
 		return err
@@ -260,12 +449,15 @@ func (r *ShopReconciler) syncStatus(ctx context.Context, shop *v1alpha1.Shop) er
 
 	latest.Status.Replicas = deploy.Status.Replicas
 	latest.Status.ReadyReplicas = deploy.Status.ReadyReplicas
-	latest.Status.ServiceURL = fmt.Sprintf("%s.%s.svc.cluster.local", shop.Name, shop.Namespace)
-	latest.Status.DatabaseReady = true
+	latest.Status.ServiceURL = "http://" + shop.Name + ".local"
+	latest.Status.DatabaseReady = dbReady
 
-	if deploy.Status.ReadyReplicas > 0 && deploy.Status.ReadyReplicas == deploy.Status.Replicas {
+	switch {
+	case !dbReady:
+		latest.Status.Phase = "ProvisioningDB"
+	case deploy.Status.ReadyReplicas > 0 && deploy.Status.ReadyReplicas == deploy.Status.Replicas:
 		latest.Status.Phase = "Running"
-	} else {
+	default:
 		latest.Status.Phase = "Pending"
 	}
 
@@ -286,7 +478,26 @@ func ownerRefToMap(ref *metav1.OwnerReference) map[string]interface{} {
 
 func shopLabels(name string) map[string]string {
 	return map[string]string{
-		"app":        name,
-		"managed-by": "shop-operator",
+		"app":                          name,
+		"app.kubernetes.io/name":       "shop",
+		"app.kubernetes.io/instance":   name,
+		"app.kubernetes.io/managed-by": "shop-operator",
 	}
+}
+
+func dbClusterName(shopName string) string {
+	return shopName + "-db"
+}
+
+func dbSecretName(shopName string) string {
+	return dbClusterName(shopName) + "-app"
+}
+
+// shopNameFromClusterLabel reverses dbClusterName: "<shop>-db" -> "<shop>".
+func shopNameFromClusterLabel(clusterLabel string) (string, bool) {
+	const suffix = "-db"
+	if len(clusterLabel) <= len(suffix) || clusterLabel[len(clusterLabel)-len(suffix):] != suffix {
+		return "", false
+	}
+	return clusterLabel[:len(clusterLabel)-len(suffix)], true
 }
