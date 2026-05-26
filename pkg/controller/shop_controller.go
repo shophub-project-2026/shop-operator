@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -79,16 +80,16 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("reconcile database: %w", err)
 	}
 
-	secretReady, err := r.dbSecretReady(ctx, shop)
+	dbReady, err := r.dbReady(ctx, shop)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("check db secret: %w", err)
+		return ctrl.Result{}, fmt.Errorf("check db: %w", err)
 	}
-	if !secretReady {
-		logger.Info("Database secret not ready yet, waiting", "shop", shop.Name)
+	if !dbReady {
+		logger.Info("Database not ready yet, requeueing", "shop", shop.Name)
 		if err := r.syncStatus(ctx, shop, false); err != nil {
 			logger.Error(err, "sync status while waiting for db")
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	if err := r.reconcileDeployment(ctx, shop); err != nil {
@@ -393,17 +394,38 @@ func (r *ShopReconciler) reconcilePostgresCluster(ctx context.Context, shop *v1a
 	return r.Update(ctx, existing)
 }
 
-// dbSecretReady returns true when the CNPG-managed application Secret exists.
-func (r *ShopReconciler) dbSecretReady(ctx context.Context, shop *v1alpha1.Shop) (bool, error) {
-	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name:      dbSecretName(shop.Name),
+// dbReady returns true only when the CNPG cluster has at least one ready
+// instance AND the application Secret exists. Checking only the Secret is
+// insufficient: CNPG creates the Secret before the Postgres process is ready
+// to accept connections, which causes the shop pods to crash-loop on startup.
+func (r *ShopReconciler) dbReady(ctx context.Context, shop *v1alpha1.Shop) (bool, error) {
+	cluster := &unstructured.Unstructured{}
+	cluster.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster",
+	})
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      dbClusterName(shop.Name),
 		Namespace: shop.Namespace,
-	}, secret)
-	if errors.IsNotFound(err) {
+	}, cluster); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	status, _ := cluster.Object["status"].(map[string]interface{})
+	readyInstances, _ := status["readyInstances"].(int64)
+	if readyInstances < 1 {
 		return false, nil
 	}
-	if err != nil {
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      dbSecretName(shop.Name),
+		Namespace: shop.Namespace,
+	}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
