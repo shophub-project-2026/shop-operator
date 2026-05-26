@@ -31,6 +31,11 @@ const (
 	dbStorageStd     = "1Gi"
 	dbStorageLight   = "256Mi"
 	ingressClassName = "nginx"
+	// ingressHostSuffix uses nip.io's wildcard DNS so a freshly-created Shop
+	// is reachable at http://<name>.127.0.0.1.nip.io with zero hosts-file
+	// edits on the developer machine. nip.io resolves <anything>.<ip>.nip.io
+	// back to <ip>, so any shop name routes to the local ingress on 127.0.0.1.
+	ingressHostSuffix = ".127.0.0.1.nip.io"
 )
 
 type ShopReconciler struct {
@@ -261,7 +266,7 @@ func (r *ShopReconciler) reconcileService(ctx context.Context, shop *v1alpha1.Sh
 func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Shop) error {
 	className := ingressClassName
 	pathType := networkingv1.PathTypePrefix
-	host := shop.Name + ".local"
+	host := shop.Name + ingressHostSuffix
 
 	desired := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -449,7 +454,7 @@ func (r *ShopReconciler) syncStatus(ctx context.Context, shop *v1alpha1.Shop, db
 
 	latest.Status.Replicas = deploy.Status.Replicas
 	latest.Status.ReadyReplicas = deploy.Status.ReadyReplicas
-	latest.Status.ServiceURL = "http://" + shop.Name + ".local"
+	latest.Status.ServiceURL = "http://" + shop.Name + ingressHostSuffix
 	latest.Status.DatabaseReady = dbReady
 
 	switch {
