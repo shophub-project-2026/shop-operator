@@ -37,7 +37,28 @@ const (
 	// edits on the developer machine. nip.io resolves <anything>.<ip>.nip.io
 	// back to <ip>, so any shop name routes to the local ingress on 127.0.0.1.
 	ingressHostSuffix = ".127.0.0.1.nip.io"
+
+	// sessionCookieMaxAge matches the in-memory cart TTL in the shop service
+	// (cart.NewStore default of 30 minutes). Pinning a browser to the same
+	// pod for that window keeps the wallet's cart visible across redirects.
+	sessionCookieMaxAge = "1800"
+	sessionCookieName   = "shop_route"
 )
+
+// ingressAffinityAnnotations pins each browser to a single shop pod via an
+// nginx-ingress cookie. Without this, two-replica Shops lose cart contents
+// after the 303 from POST /cart because the follow-up GET round-robins to
+// the other pod, whose in-memory cart.Store is empty for that wallet.
+func ingressAffinityAnnotations() map[string]string {
+	return map[string]string{
+		"nginx.ingress.kubernetes.io/affinity":                "cookie",
+		"nginx.ingress.kubernetes.io/affinity-mode":           "persistent",
+		"nginx.ingress.kubernetes.io/session-cookie-name":     sessionCookieName,
+		"nginx.ingress.kubernetes.io/session-cookie-max-age":  sessionCookieMaxAge,
+		"nginx.ingress.kubernetes.io/session-cookie-path":     "/",
+		"nginx.ingress.kubernetes.io/session-cookie-samesite": "Lax",
+	}
+}
 
 type ShopReconciler struct {
 	client.Client
@@ -271,9 +292,10 @@ func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Sh
 
 	desired := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      shop.Name,
-			Namespace: shop.Namespace,
-			Labels:    shopLabels(shop.Name),
+			Name:        shop.Name,
+			Namespace:   shop.Namespace,
+			Labels:      shopLabels(shop.Name),
+			Annotations: ingressAffinityAnnotations(),
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: &className,
@@ -315,6 +337,14 @@ func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Sh
 	}
 
 	existing.Labels = desired.Labels
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	// Merge — don't replace — so annotations added by other controllers
+	// (cert-manager, external-dns, etc.) survive a reconcile.
+	for k, v := range desired.Annotations {
+		existing.Annotations[k] = v
+	}
 	existing.Spec = desired.Spec
 	return r.Update(ctx, existing)
 }
