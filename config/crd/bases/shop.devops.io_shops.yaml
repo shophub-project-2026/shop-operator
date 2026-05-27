@@ -54,6 +54,11 @@ spec:
               image:
                 type: string
               walletAddress:
+                description: |-
+                  Merchant's Ethereum address that customer payments are sent to.
+                  Must be a 0x-prefixed 20-byte hex string. EIP-55 mixed case is
+                  accepted; checksum is not enforced at admission time.
+                pattern: ^0x[a-fA-F0-9]{40}$
                 type: string
             required:
             - walletAddress

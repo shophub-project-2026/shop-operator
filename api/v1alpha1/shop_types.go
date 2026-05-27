@@ -48,7 +48,11 @@ type Shop struct {
 }
 
 type ShopSpec struct {
-	Availability  string `json:"availability,omitempty"`
+	Availability string `json:"availability,omitempty"`
+	// WalletAddress is the merchant's Ethereum address that customer
+	// payments are sent to. Must be a 0x-prefixed 20-byte hex string
+	// (EIP-55 mixed case is accepted; checksum is not enforced here).
+	// +kubebuilder:validation:Pattern=`^0x[a-fA-F0-9]{40}$`
 	WalletAddress string `json:"walletAddress"`
 	Database      string `json:"database,omitempty"`
 	Image         string `json:"image,omitempty"`
