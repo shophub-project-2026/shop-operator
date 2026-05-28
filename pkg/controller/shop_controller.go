@@ -196,7 +196,11 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 								envFromSecret("SHOP_DB_PASSWORD", "password"),
 								{Name: "SHOP_ADMIN_KEY", Value: "admin-" + shop.Name},
 								{Name: "SHOP_ETH_WALLET", Value: shop.Spec.WalletAddress},
-								{Name: "SHOP_ETH_RPC_URL", Value: "https://rpc.sepolia.org"},
+								// rpc.sepolia.org was decommissioned and now serves a static
+								// Apache 404 page instead of JSON-RPC, which breaks payment
+								// verification. PublicNode is a free, multi-region public RPC
+								// for Sepolia that does not require an API key.
+								{Name: "SHOP_ETH_RPC_URL", Value: "https://ethereum-sepolia-rpc.publicnode.com"},
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
