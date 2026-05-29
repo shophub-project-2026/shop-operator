@@ -34,7 +34,7 @@ const (
 	shopHTTPPort      = 8080
 	dbStorageStd      = "1Gi"
 	dbStorageLight    = "256Mi"
-	ingressClassName = "nginx"
+	ingressClassName  = "nginx"
 	// ingressHostSuffix uses nip.io's wildcard DNS so a freshly-created Shop
 	// is reachable at http://<name>.127.0.0.1.nip.io with zero hosts-file
 	// edits on the developer machine. nip.io resolves <anything>.<ip>.nip.io
