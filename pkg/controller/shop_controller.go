@@ -28,10 +28,13 @@ import (
 
 const (
 	defaultShopImage = "milos2002/shop:development"
-	shopHTTPPort     = 8080
-	dbStorageStd     = "1Gi"
-	dbStorageLight   = "256Mi"
-	ingressClassName = "nginx"
+	// defaultRedisImage is the standalone Redis image deployed by the Redis
+	// operator for shops with database=light.
+	defaultRedisImage = "quay.io/opstree/redis:v7.0.15"
+	shopHTTPPort      = 8080
+	dbStorageStd      = "1Gi"
+	dbStorageLight    = "256Mi"
+	ingressClassName  = "nginx"
 	// ingressHostSuffix uses nip.io's wildcard DNS so a freshly-created Shop
 	// is reachable at http://<name>.127.0.0.1.nip.io with zero hosts-file
 	// edits on the developer machine. nip.io resolves <anything>.<ip>.nip.io
@@ -144,19 +147,6 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 	}
 
 	labels := shopLabels(shop.Name)
-	dbSecret := dbSecretName(shop.Name)
-
-	envFromSecret := func(name, key string) corev1.EnvVar {
-		return corev1.EnvVar{
-			Name: name,
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: dbSecret},
-					Key:                  key,
-				},
-			},
-		}
-	}
 
 	desired := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -185,23 +175,7 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 							Ports: []corev1.ContainerPort{
 								{Name: "http", ContainerPort: shopHTTPPort, Protocol: corev1.ProtocolTCP},
 							},
-							Env: []corev1.EnvVar{
-								{Name: "SHOP_HTTP_ADDR", Value: fmt.Sprintf(":%d", shopHTTPPort)},
-								{Name: "SHOP_ENV", Value: "production"},
-								{Name: "SHOP_LOG_LEVEL", Value: "info"},
-								envFromSecret("SHOP_DB_HOST", "host"),
-								envFromSecret("SHOP_DB_PORT", "port"),
-								envFromSecret("SHOP_DB_NAME", "dbname"),
-								envFromSecret("SHOP_DB_USER", "username"),
-								envFromSecret("SHOP_DB_PASSWORD", "password"),
-								{Name: "SHOP_ADMIN_KEY", Value: "admin-" + shop.Name},
-								{Name: "SHOP_ETH_WALLET", Value: shop.Spec.WalletAddress},
-								// rpc.sepolia.org was decommissioned and now serves a static
-								// Apache 404 page instead of JSON-RPC, which breaks payment
-								// verification. PublicNode is a free, multi-region public RPC
-								// for Sepolia that does not require an API key.
-								{Name: "SHOP_ETH_RPC_URL", Value: "https://ethereum-sepolia-rpc.publicnode.com"},
-							},
+							Env: shopEnv(shop),
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -354,7 +328,78 @@ func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Sh
 }
 
 func (r *ShopReconciler) reconcileDatabase(ctx context.Context, shop *v1alpha1.Shop) error {
+	if isLightDB(shop) {
+		return r.reconcileRedis(ctx, shop)
+	}
 	return r.reconcilePostgresCluster(ctx, shop)
+}
+
+// reconcileRedis creates a standalone Redis instance via the Redis operator
+// (redis.redis.opstreelabs.in/v1beta2). It is used for shops with
+// database=light, where a lightweight in-memory store replaces the
+// CloudNativePG PostgreSQL cluster. The operator deploys a StatefulSet and a
+// ClusterIP Service named after the CR, both reachable on port 6379.
+func (r *ShopReconciler) reconcileRedis(ctx context.Context, shop *v1alpha1.Shop) error {
+	gvk := schema.GroupVersionKind{
+		Group:   "redis.redis.opstreelabs.in",
+		Version: "v1beta2",
+		Kind:    "Redis",
+	}
+
+	ownerRef := metav1.NewControllerRef(shop, v1alpha1.SchemeGroupVersion.WithKind("Shop"))
+	name := redisName(shop.Name)
+	desired := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "redis.redis.opstreelabs.in/v1beta2",
+			"kind":       "Redis",
+			"metadata": map[string]interface{}{
+				"name":            name,
+				"namespace":       shop.Namespace,
+				"ownerReferences": []interface{}{ownerRefToMap(ownerRef)},
+				"labels":          shopLabels(shop.Name),
+			},
+			"spec": map[string]interface{}{
+				"kubernetesConfig": map[string]interface{}{
+					"image":           defaultRedisImage,
+					"imagePullPolicy": "IfNotPresent",
+				},
+				"storage": map[string]interface{}{
+					"volumeClaimTemplate": map[string]interface{}{
+						"spec": map[string]interface{}{
+							"accessModes": []interface{}{"ReadWriteOnce"},
+							"resources": map[string]interface{}{
+								"requests": map[string]interface{}{"storage": dbStorageLight},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	desired.SetGroupVersionKind(gvk)
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(gvk)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: shop.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	// Patch only the image so operator-managed status/defaults stay intact.
+	spec, ok := existing.Object["spec"].(map[string]interface{})
+	if !ok {
+		spec = map[string]interface{}{}
+	}
+	k8sCfg, ok := spec["kubernetesConfig"].(map[string]interface{})
+	if !ok {
+		k8sCfg = map[string]interface{}{}
+	}
+	k8sCfg["image"] = defaultRedisImage
+	spec["kubernetesConfig"] = k8sCfg
+	existing.Object["spec"] = spec
+	return r.Update(ctx, existing)
 }
 
 // reconcilePostgresCluster creates a CNPG Cluster with bootstrap so that CNPG
@@ -433,6 +478,10 @@ func (r *ShopReconciler) reconcilePostgresCluster(ctx context.Context, shop *v1a
 // insufficient: CNPG creates the Secret before the Postgres process is ready
 // to accept connections, which causes the shop pods to crash-loop on startup.
 func (r *ShopReconciler) dbReady(ctx context.Context, shop *v1alpha1.Shop) (bool, error) {
+	if isLightDB(shop) {
+		return r.redisReady(ctx, shop)
+	}
+
 	cluster := &unstructured.Unstructured{}
 	cluster.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster",
@@ -463,6 +512,24 @@ func (r *ShopReconciler) dbReady(ctx context.Context, shop *v1alpha1.Shop) (bool
 		return false, err
 	}
 	return true, nil
+}
+
+// redisReady returns true once the Redis operator's StatefulSet for the shop
+// reports at least one ready replica. The Redis CR itself exposes no
+// machine-readable readiness field, so the backing StatefulSet is the source
+// of truth.
+func (r *ShopReconciler) redisReady(ctx context.Context, shop *v1alpha1.Shop) (bool, error) {
+	sts := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      redisName(shop.Name),
+		Namespace: shop.Namespace,
+	}, sts); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return sts.Status.ReadyReplicas >= 1, nil
 }
 
 // findShopsForSecret maps a CNPG-managed Secret change back to the owning Shop
@@ -544,6 +611,65 @@ func shopLabels(name string) map[string]string {
 		"app.kubernetes.io/instance":   name,
 		"app.kubernetes.io/managed-by": "shop-operator",
 	}
+}
+
+// isLightDB reports whether the shop uses the lightweight Redis backend.
+func isLightDB(shop *v1alpha1.Shop) bool {
+	return shop.Spec.Database == "light"
+}
+
+// shopEnv builds the container environment for the shop pod. The persistence
+// block differs by database type: PostgreSQL pulls credentials from the
+// CNPG-managed Secret, while Redis (database=light) points the app at the
+// Redis operator's Service. Common app config is shared.
+func shopEnv(shop *v1alpha1.Shop) []corev1.EnvVar {
+	envFromSecret := func(name, key string) corev1.EnvVar {
+		return corev1.EnvVar{
+			Name: name,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: dbSecretName(shop.Name)},
+					Key:                  key,
+				},
+			},
+		}
+	}
+
+	env := []corev1.EnvVar{
+		{Name: "SHOP_HTTP_ADDR", Value: fmt.Sprintf(":%d", shopHTTPPort)},
+		{Name: "SHOP_ENV", Value: "production"},
+		{Name: "SHOP_LOG_LEVEL", Value: "info"},
+	}
+
+	if isLightDB(shop) {
+		env = append(env,
+			corev1.EnvVar{Name: "SHOP_DB_TYPE", Value: "redis"},
+			corev1.EnvVar{Name: "SHOP_REDIS_ADDR", Value: fmt.Sprintf("%s:6379", redisName(shop.Name))},
+		)
+	} else {
+		env = append(env,
+			corev1.EnvVar{Name: "SHOP_DB_TYPE", Value: "postgres"},
+			envFromSecret("SHOP_DB_HOST", "host"),
+			envFromSecret("SHOP_DB_PORT", "port"),
+			envFromSecret("SHOP_DB_NAME", "dbname"),
+			envFromSecret("SHOP_DB_USER", "username"),
+			envFromSecret("SHOP_DB_PASSWORD", "password"),
+		)
+	}
+
+	env = append(env,
+		corev1.EnvVar{Name: "SHOP_ADMIN_KEY", Value: "admin-" + shop.Name},
+		corev1.EnvVar{Name: "SHOP_ETH_WALLET", Value: shop.Spec.WalletAddress},
+		// rpc.sepolia.org was decommissioned and now serves a static Apache 404
+		// page instead of JSON-RPC, which breaks payment verification. PublicNode
+		// is a free, multi-region public RPC for Sepolia with no API key.
+		corev1.EnvVar{Name: "SHOP_ETH_RPC_URL", Value: "https://ethereum-sepolia-rpc.publicnode.com"},
+	)
+	return env
+}
+
+func redisName(shopName string) string {
+	return shopName + "-redis"
 }
 
 func dbClusterName(shopName string) string {
