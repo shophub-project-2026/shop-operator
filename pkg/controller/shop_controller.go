@@ -139,8 +139,15 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 	}
 
 	image := shop.Spec.Image
+	// pullPolicy is Always for the default mutable :development tag so a fresh
+	// CI build is always picked up when a pod is (re)created. When an explicit
+	// image is set (e.g. deploy-local's unique local-<ts> tag), IfNotPresent
+	// avoids needless re-pulls since that tag's content never changes.
+	pullPolicy := corev1.PullAlways
 	if image == "" {
 		image = defaultShopImage
+	} else {
+		pullPolicy = corev1.PullIfNotPresent
 	}
 
 	labels := shopLabels(shop.Name)
@@ -181,7 +188,7 @@ func (r *ShopReconciler) reconcileDeployment(ctx context.Context, shop *v1alpha1
 						{
 							Name:            "shop",
 							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: pullPolicy,
 							Ports: []corev1.ContainerPort{
 								{Name: "http", ContainerPort: shopHTTPPort, Protocol: corev1.ProtocolTCP},
 							},
