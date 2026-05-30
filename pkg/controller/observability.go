@@ -71,7 +71,8 @@ func (r *ShopReconciler) reconcilePrometheusRule(ctx context.Context, shop *v1al
 		map[string]interface{}{
 			"alert": "ShopHighErrorRate",
 			"expr": fmt.Sprintf(
-				`sum(rate(shop_http_requests_total{%s,status=~"5.."}[5m])) / clamp_min(sum(rate(shop_http_requests_total{%s}[5m])), 1) * 100 > 5`,
+				`sum(rate(shop_http_requests_total{%s,status=~"5.."}[5m]))`+
+					` / clamp_min(sum(rate(shop_http_requests_total{%s}[5m])), 1) * 100 > 5`,
 				sel, sel),
 			"for": "5m",
 			"labels": map[string]interface{}{
@@ -208,13 +209,14 @@ func (r *ShopReconciler) reconcileAlertRouting(ctx context.Context, shop *v1alph
 	}
 	existingSecret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: shop.Namespace}, existingSecret)
-	if errors.IsNotFound(err) {
+	switch {
+	case errors.IsNotFound(err):
 		if err := r.Create(ctx, secret); err != nil {
 			return err
 		}
-	} else if err != nil {
+	case err != nil:
 		return err
-	} else {
+	default:
 		existingSecret.StringData = secret.StringData
 		existingSecret.Labels = secret.Labels
 		if err := r.Update(ctx, existingSecret); err != nil {

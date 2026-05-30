@@ -1,0 +1,150 @@
+{
+  "uid": "shop-__SHOP__",
+  "title": "Shop — __SHOP__",
+  "tags": ["shop", "shophub"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {"from": "now-24h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data Source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      }
+    ]
+  },
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Total HTTP requests (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "sum(increase(shop_http_requests_total{shop=\"__SHOP__\"}[24h]))"}]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Successful 2xx/3xx (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "sum(increase(shop_http_requests_total{shop=\"__SHOP__\",status=~\"2..|3..\"}[24h]))"}]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Failed 4xx/5xx (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "red"}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "sum(increase(shop_http_requests_total{shop=\"__SHOP__\",status=~\"4..|5..\"}[24h]))"}]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Unique visitors (today)",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "max(shop_http_unique_visitors_total{shop=\"__SHOP__\"})"}]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Total traffic (GB)",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "decgbytes", "decimals": 3}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "sum(shop_http_response_bytes_total{shop=\"__SHOP__\"}) / 1e9"}]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Articles",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "expr": "max(shop_articles_total{shop=\"__SHOP__\"})"}]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Request rate by status",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "legendFormat": "{{status}}",
+        "expr": "sum by (status) (rate(shop_http_requests_total{shop=\"__SHOP__\"}[5m]))"}]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Request latency (p50 / p99)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "p50",
+         "expr": "histogram_quantile(0.50, sum(rate(shop_http_request_duration_seconds_bucket{shop=\"__SHOP__\"}[5m])) by (le))"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "p99",
+         "expr": "histogram_quantile(0.99, sum(rate(shop_http_request_duration_seconds_bucket{shop=\"__SHOP__\"}[5m])) by (le))"}
+      ]
+    },
+    {
+      "id": 9, "type": "table", "title": "Top 404 endpoints (24h)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "format": "table", "instant": true,
+        "expr": "topk(10, sum by (path) (increase(shop_http_requests_total{shop=\"__SHOP__\",status=\"404\"}[24h])))"}]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Orders by status (rate)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "legendFormat": "{{status}}",
+        "expr": "sum by (status) (rate(shop_orders_total{shop=\"__SHOP__\"}[15m]))"}]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "CPU usage (cores)",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"__NS__\",pod=~\"__SHOP__-.*\",container=\"shop\"}[5m]))"}]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Memory working set",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"__NS__\",pod=~\"__SHOP__-.*\",container=\"shop\"})"}]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Network throughput",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "rx {{pod}}",
+         "expr": "sum by (pod) (rate(container_network_receive_bytes_total{namespace=\"__NS__\",pod=~\"__SHOP__-.*\"}[5m]))"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "tx {{pod}}",
+         "expr": "sum by (pod) (rate(container_network_transmit_bytes_total{namespace=\"__NS__\",pod=~\"__SHOP__-.*\"}[5m]))"}
+      ]
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Filesystem usage",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (container_fs_usage_bytes{namespace=\"__NS__\",pod=~\"__SHOP__-.*\"})"}]
+    }
+  ]
+}
