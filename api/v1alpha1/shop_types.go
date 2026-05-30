@@ -56,6 +56,10 @@ type ShopSpec struct {
 	WalletAddress string `json:"walletAddress"`
 	Database      string `json:"database,omitempty"`
 	Image         string `json:"image,omitempty"`
+	// NotificationWebhook is an optional Discord webhook URL. When set, the
+	// operator provisions a DiscordChannel plus an Alertmanager route so that
+	// this shop's alerts are delivered to its own Discord channel.
+	NotificationWebhook string `json:"notificationWebhook,omitempty"`
 }
 
 type ShopStatus struct {

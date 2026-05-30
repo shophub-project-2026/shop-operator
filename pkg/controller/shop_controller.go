@@ -35,6 +35,9 @@ const (
 	dbStorageStd      = "1Gi"
 	dbStorageLight    = "256Mi"
 	ingressClassName  = "nginx"
+	// otlpEndpoint is the in-cluster OTLP/HTTP collector (Grafana Tempo) the
+	// shop exports traces to, satisfying the §4.1 tracing requirement.
+	otlpEndpoint = "http://tempo.monitoring.svc.cluster.local:4318"
 	// ingressHostSuffix uses nip.io's wildcard DNS so a freshly-created Shop
 	// is reachable at http://<name>.127.0.0.1.nip.io with zero hosts-file
 	// edits on the developer machine. nip.io resolves <anything>.<ip>.nip.io
@@ -126,6 +129,10 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := r.reconcileIngress(ctx, shop); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile ingress: %w", err)
+	}
+
+	if err := r.reconcileObservability(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile observability: %w", err)
 	}
 
 	if err := r.syncStatus(ctx, shop, true); err != nil {
@@ -671,6 +678,8 @@ func shopEnv(shop *v1alpha1.Shop) []corev1.EnvVar {
 		// page instead of JSON-RPC, which breaks payment verification. PublicNode
 		// is a free, multi-region public RPC for Sepolia with no API key.
 		corev1.EnvVar{Name: "SHOP_ETH_RPC_URL", Value: "https://ethereum-sepolia-rpc.publicnode.com"},
+		// Export traces to the in-cluster Tempo collector (OTLP/HTTP).
+		corev1.EnvVar{Name: "SHOP_OTLP_ENDPOINT", Value: otlpEndpoint},
 	)
 	return env
 }
