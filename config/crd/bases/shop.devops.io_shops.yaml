@@ -53,6 +53,12 @@ spec:
                 type: string
               image:
                 type: string
+              notificationWebhook:
+                description: |-
+                  Optional Discord webhook URL. When set, the operator provisions
+                  a DiscordChannel and an Alertmanager route so this shop's alerts
+                  are delivered to its own Discord channel.
+                type: string
               walletAddress:
                 description: |-
                   Merchant's Ethereum address that customer payments are sent to.
