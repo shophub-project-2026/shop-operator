@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,8 +27,15 @@ import (
 	"github.com/devops-milos/shop-operator/api/v1alpha1"
 )
 
+var defaultShopImage = "milos2002/shop:development"
+
+func init() {
+	if img := os.Getenv("DEFAULT_SHOP_IMAGE"); img != "" {
+		defaultShopImage = img
+	}
+}
+
 const (
-	defaultShopImage = "milos2002/shop:development"
 	// defaultRedisImage is the standalone Redis image deployed by the Redis
 	// operator for shops with database=light.
 	defaultRedisImage = "quay.io/opstree/redis:v7.0.15"
