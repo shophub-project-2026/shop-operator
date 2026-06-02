@@ -20,9 +20,9 @@ import (
 // required by §4.1 of the specification:
 //   - a PrometheusRule with alerts scoped to this shop (label shop=<name>),
 //   - a Grafana dashboard (ConfigMap picked up by the Grafana sidecar),
-//   - when a notification webhook is configured: a DiscordChannel, a Secret
-//     holding the webhook, and an AlertmanagerConfig that routes this shop's
-//     alerts to its own Discord channel.
+//   - a DiscordChannel so EVERY shop gets its own notification channel,
+//   - once the channel's webhook is resolved, a Secret holding that webhook and
+//     an AlertmanagerConfig routing this shop's alerts to its own channel.
 //
 // All resources are owned by the Shop so they are garbage-collected with it.
 func (r *ShopReconciler) reconcileObservability(ctx context.Context, shop *v1alpha1.Shop) error {
@@ -32,15 +32,43 @@ func (r *ShopReconciler) reconcileObservability(ctx context.Context, shop *v1alp
 	if err := r.reconcileDashboard(ctx, shop); err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
-	if shop.Spec.NotificationWebhook != "" {
-		if err := r.reconcileDiscordChannel(ctx, shop); err != nil {
-			return fmt.Errorf("discord channel: %w", err)
-		}
-		if err := r.reconcileAlertRouting(ctx, shop); err != nil {
-			return fmt.Errorf("alert routing: %w", err)
-		}
+
+	// §4.1: every shop must notify its own Discord channel, so a DiscordChannel
+	// is always created (not gated on a user-supplied webhook). The
+	// DiscordChannel controller provisions the channel + webhook via the bot and
+	// publishes the resolved webhook URL in status. This Shop owns the
+	// DiscordChannel, so its status updates re-trigger this reconcile (see the
+	// Owns(&DiscordChannel{}) in SetupWithManager).
+	if err := r.reconcileDiscordChannel(ctx, shop); err != nil {
+		return fmt.Errorf("discord channel: %w", err)
+	}
+	webhookURL, err := r.resolvedWebhookURL(ctx, shop)
+	if err != nil {
+		return fmt.Errorf("resolve webhook: %w", err)
+	}
+	if webhookURL == "" {
+		// Channel not provisioned yet; routing is wired on the next reconcile,
+		// which the DiscordChannel status update will trigger.
+		return nil
+	}
+	if err := r.reconcileAlertRouting(ctx, shop, webhookURL); err != nil {
+		return fmt.Errorf("alert routing: %w", err)
 	}
 	return nil
+}
+
+// resolvedWebhookURL returns the webhook URL the shop's DiscordChannel resolved
+// to (bot-created or manual override), or "" if it is not ready yet.
+func (r *ShopReconciler) resolvedWebhookURL(ctx context.Context, shop *v1alpha1.Shop) (string, error) {
+	dc := &v1alpha1.DiscordChannel{}
+	err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, dc)
+	if errors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return dc.Status.WebhookURL, nil
 }
 
 func prometheusRuleName(shop string) string   { return shop + "-alerts" }
@@ -160,8 +188,10 @@ func (r *ShopReconciler) reconcileDashboard(ctx context.Context, shop *v1alpha1.
 	return r.Update(ctx, existing)
 }
 
-// reconcileDiscordChannel creates a DiscordChannel CR so the existing
-// reconciler validates the webhook and reflects its status.
+// reconcileDiscordChannel creates the shop's DiscordChannel CR. The
+// DiscordChannel controller provisions a dedicated Discord channel + webhook
+// via the bot. A user-supplied NotificationWebhook is passed through as a
+// manual override, letting a shop reuse a pre-existing channel.
 func (r *ShopReconciler) reconcileDiscordChannel(ctx context.Context, shop *v1alpha1.Shop) error {
 	desired := &v1alpha1.DiscordChannel{
 		ObjectMeta: metav1.ObjectMeta{
@@ -170,8 +200,8 @@ func (r *ShopReconciler) reconcileDiscordChannel(ctx context.Context, shop *v1al
 			Labels:    shopLabels(shop.Name),
 		},
 		Spec: v1alpha1.DiscordChannelSpec{
-			WebhookURL:  shop.Spec.NotificationWebhook,
 			ChannelName: shop.Name,
+			WebhookURL:  shop.Spec.NotificationWebhook,
 		},
 	}
 	if err := ctrl.SetControllerReference(shop, desired, r.Scheme); err != nil {
@@ -190,9 +220,9 @@ func (r *ShopReconciler) reconcileDiscordChannel(ctx context.Context, shop *v1al
 	return r.Update(ctx, existing)
 }
 
-// reconcileAlertRouting creates the Secret holding the Discord webhook and an
-// AlertmanagerConfig that routes alerts labelled shop=<name> to it.
-func (r *ShopReconciler) reconcileAlertRouting(ctx context.Context, shop *v1alpha1.Shop) error {
+// reconcileAlertRouting creates the Secret holding the resolved Discord webhook
+// and an AlertmanagerConfig that routes alerts labelled shop=<name> to it.
+func (r *ShopReconciler) reconcileAlertRouting(ctx context.Context, shop *v1alpha1.Shop, webhookURL string) error {
 	// 1. Secret with the webhook URL (referenced by the AlertmanagerConfig).
 	secretName := discordWebhookSecret(shop.Name)
 	secret := &corev1.Secret{
@@ -202,7 +232,7 @@ func (r *ShopReconciler) reconcileAlertRouting(ctx context.Context, shop *v1alph
 			Labels:    shopLabels(shop.Name),
 		},
 		Type:       corev1.SecretTypeOpaque,
-		StringData: map[string]string{"webhook-url": shop.Spec.NotificationWebhook},
+		StringData: map[string]string{"webhook-url": webhookURL},
 	}
 	if err := ctrl.SetControllerReference(shop, secret, r.Scheme); err != nil {
 		return fmt.Errorf("set owner ref on secret: %w", err)

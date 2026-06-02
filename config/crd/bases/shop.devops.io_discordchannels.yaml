@@ -43,16 +43,22 @@ spec:
             properties:
               channelName:
                 type: string
+              guildId:
+                type: string
               webhookUrl:
                 type: string
-            required:
-            - webhookUrl
             type: object
           status:
             properties:
+              channelId:
+                type: string
               message:
                 type: string
               status:
+                type: string
+              webhookId:
+                type: string
+              webhookUrl:
                 type: string
             type: object
         type: object
