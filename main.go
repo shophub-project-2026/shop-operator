@@ -59,7 +59,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		setupLog.Info("DISCORD_BOT_TOKEN not set; per-shop channel creation disabled (manual webhookUrl override still works)")
+		setupLog.Info("DISCORD_BOT_TOKEN not set; bot channel creation disabled (manual webhookUrl override still works)")
 	}
 
 	if err = (&controller.DiscordChannelReconciler{
