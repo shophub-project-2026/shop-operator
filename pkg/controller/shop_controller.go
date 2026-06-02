@@ -90,6 +90,10 @@ func (r *ShopReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
+		// The shop owns its DiscordChannel; watching it means the webhook URL
+		// the DiscordChannel controller resolves re-triggers this reconcile so
+		// alert routing gets wired without polling.
+		Owns(&v1alpha1.DiscordChannel{}).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findShopsForSecret),

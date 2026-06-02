@@ -7,7 +7,7 @@ Kubernetes operator za upravljanje Shop resursima, Discord notifikacijama i bloc
 Shop Operator je Kubernetes Operator koji omogućava:
 
 - **Shop CRD**: deployment Shop aplikacije sa 2 ili 3 replike
-- **DiscordChannel CRD**: konfiguraciju Discord webhook-a za notifikacije
+- **DiscordChannel CRD**: operator kreira poseban Discord kanal + webhook po shopu (preko bot API-ja); alarmi tog shopa idu na njegov kanal
 - **Wallet CRD**: upravljanje blockchain wallet adresama za primanje uplata
 
 ## Zahtevi
@@ -68,15 +68,27 @@ spec:
 
 ### DiscordChannel
 
+Operator za svaki shop kreira poseban kanal na Discord serveru i webhook na
+njemu, pa rutira alarme tog shopa (`shop=<ime>`) na taj kanal. Za to operatoru
+treba bot token i guild (server) ID — vidi `DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID`
+(helm `discord.guildId` + `discord.botToken.secretName`). Bot mora biti pozvan u
+guild sa permisijama **Manage Channels** i **Manage Webhooks**.
+
 ```yaml
 apiVersion: shop.devops.io/v1alpha1
 kind: DiscordChannel
 metadata:
-  name: my-discord-channel
+  name: my-shop
 spec:
-  webhookUrl: "https://discordapp.com/api/webhooks/..."
-  channelName: "shop-notifications"
+  channelName: "my-shop"        # kanal se kreira kao #shop-my-shop
+  # guildId: "..."              # opciono: override default guild-a operatora
+  # webhookUrl: "https://..."   # opciono: override — koristi postojeći kanal
+                                # umesto da ga operator kreira
 ```
+
+Status nakon reconcile-a sadrži `channelId`, `webhookId` i razrešeni `webhookUrl`
+koji per-shop `AlertmanagerConfig` koristi. Brisanje CR-a (finalizer) briše i
+kreirani kanal sa servera.
 
 ### Wallet
 

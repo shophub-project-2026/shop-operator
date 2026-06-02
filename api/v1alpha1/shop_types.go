@@ -135,13 +135,30 @@ type DiscordChannel struct {
 }
 
 type DiscordChannelSpec struct {
-	WebhookURL  string `json:"webhookUrl"`
+	// ChannelName is the name of the Discord text channel the operator creates
+	// in the guild for this shop's notifications.
 	ChannelName string `json:"channelName,omitempty"`
+	// GuildID overrides the operator's default guild for this channel. When
+	// empty, the operator's configured DISCORD_GUILD_ID is used.
+	GuildID string `json:"guildId,omitempty"`
+	// WebhookURL is an optional manual override. When set, the operator skips
+	// bot-driven channel/webhook creation and routes to this URL directly,
+	// which lets a shop reuse a pre-existing Discord channel.
+	WebhookURL string `json:"webhookUrl,omitempty"`
 }
 
 type DiscordChannelStatus struct {
 	Status  string `json:"status,omitempty"`
 	Message string `json:"message,omitempty"`
+	// ChannelID is the Discord channel the operator created (empty when a manual
+	// WebhookURL override is used).
+	ChannelID string `json:"channelId,omitempty"`
+	// WebhookID is the Discord webhook created on the channel.
+	WebhookID string `json:"webhookId,omitempty"`
+	// WebhookURL is the resolved webhook alerts are delivered to — bot-created
+	// or taken from the spec override. Downstream resources (the per-shop Secret
+	// and AlertmanagerConfig) consume this value.
+	WebhookURL string `json:"webhookUrl,omitempty"`
 }
 
 func (dc *DiscordChannel) DeepCopyInto(out *DiscordChannel) {
