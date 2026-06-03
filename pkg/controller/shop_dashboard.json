@@ -139,12 +139,12 @@
       ]
     },
     {
-      "id": 14, "type": "timeseries", "title": "Filesystem usage",
+      "id": 14, "type": "timeseries", "title": "Node Disk Usage (/var)",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "{{pod}}",
-        "expr": "sum by (pod) (container_fs_usage_bytes{namespace=\"__NS__\",pod=~\"__SHOP__-.*\"})"}]
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "${datasource}"}, "legendFormat": "disk used %",
+        "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/var\"} / node_filesystem_size_bytes{mountpoint=\"/var\"})"}]
     }
   ]
 }
