@@ -86,7 +86,7 @@ func (r *ShopReconciler) reconcilePrometheusRule(ctx context.Context, shop *v1al
 	rules := []interface{}{
 		map[string]interface{}{
 			"alert": "ShopInstanceDown",
-			"expr":  fmt.Sprintf(`max(up{%s}) == 0`, sel),
+			"expr":  fmt.Sprintf(`absent(up{%s}) or max(up{%s}) == 0`, sel, sel),
 			"for":   "2m",
 			"labels": map[string]interface{}{
 				"severity": "critical", "shop": shop.Name,
