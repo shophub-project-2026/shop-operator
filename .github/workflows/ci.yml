@@ -23,7 +23,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
 
       - name: Conventional Commits Check
         uses: wagoid/commitlint-github-action@v5
@@ -47,7 +47,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
 
       - name: Download dependencies
@@ -60,7 +60,7 @@ jobs:
         run: make build
 
       - name: Run unit tests
-        run: make test
+        run: make test-race
 
       - name: Run integration tests
         run: make test-integration
