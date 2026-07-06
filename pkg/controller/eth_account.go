@@ -110,7 +110,7 @@ func (c *ethRPCClient) Balance(ctx context.Context, address string) (*big.Int, e
 	if err != nil {
 		return nil, fmt.Errorf("eth_getBalance request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var out struct {
 		Result string `json:"result"`

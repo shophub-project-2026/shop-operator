@@ -62,7 +62,7 @@ type ShopSpec struct {
 	// +kubebuilder:validation:Enum=standard;light
 	// +kubebuilder:default=standard
 	Database string `json:"database,omitempty"`
-	Image         string `json:"image,omitempty"`
+	Image    string `json:"image,omitempty"`
 	// NotificationWebhook is an optional Discord webhook URL. When set, the
 	// operator provisions a DiscordChannel plus an Alertmanager route so that
 	// this shop's alerts are delivered to its own Discord channel.
