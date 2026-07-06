@@ -94,6 +94,10 @@ func (r *ShopReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// the DiscordChannel controller resolves re-triggers this reconcile so
 		// alert routing gets wired without polling.
 		Owns(&v1alpha1.DiscordChannel{}).
+		// The shop also owns its Wallet — the on-chain account customers pay
+		// into (§3.1). Owning it keeps the Wallet spec in sync when the admin
+		// changes the shop's wallet address.
+		Owns(&v1alpha1.Wallet{}).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findShopsForSecret),
@@ -141,6 +145,10 @@ func (r *ShopReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := r.reconcileIngress(ctx, shop); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile ingress: %w", err)
+	}
+
+	if err := r.reconcileWallet(ctx, shop); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile wallet: %w", err)
 	}
 
 	if err := r.reconcileObservability(ctx, shop); err != nil {
@@ -351,6 +359,57 @@ func (r *ShopReconciler) reconcileIngress(ctx context.Context, shop *v1alpha1.Sh
 	}
 	existing.Spec = desired.Spec
 	return r.Update(ctx, existing)
+}
+
+// reconcileWallet creates the shop's Wallet CR (§3.1): the on-chain account
+// customers pay into. The shop's configured walletAddress is adopted, so the
+// Wallet reconciler validates it and keeps its live balance in status. The
+// Wallet is owned by the Shop and garbage-collected with it.
+func (r *ShopReconciler) reconcileWallet(ctx context.Context, shop *v1alpha1.Shop) error {
+	desired := &v1alpha1.Wallet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      shop.Name,
+			Namespace: shop.Namespace,
+			Labels:    shopLabels(shop.Name),
+		},
+		Spec: v1alpha1.WalletSpec{
+			Address:    shop.Spec.WalletAddress,
+			Blockchain: "ethereum",
+			Network:    "sepolia",
+			Currency:   "ETH",
+		},
+	}
+	if err := ctrl.SetControllerReference(shop, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner ref on wallet: %w", err)
+	}
+
+	existing := &v1alpha1.Wallet{}
+	err := r.Get(ctx, types.NamespacedName{Name: shop.Name, Namespace: shop.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Spec == desired.Spec && labelsEqual(existing.Labels, desired.Labels) {
+		return nil
+	}
+	existing.Labels = desired.Labels
+	existing.Spec = desired.Spec
+	return r.Update(ctx, existing)
+}
+
+// labelsEqual reports whether two label maps carry identical key/value pairs.
+func labelsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *ShopReconciler) reconcileDatabase(ctx context.Context, shop *v1alpha1.Shop) error {

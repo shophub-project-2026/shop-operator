@@ -92,17 +92,60 @@ kreirani kanal sa servera.
 
 ### Wallet
 
+Wallet CRD **kreira account na blockchain-u** (§3.1) na koji korisnici vrše
+uplatu, ili adoptira postojeći:
+
+- **Kreiranje** — kada je `spec.address` prazan, operator generiše secp256k1
+  keypair, izvede EIP-55 adresu i sačuva ključeve u Secret `<ime>-keys`
+  (`address`, `private-key`). Adresa se objavljuje u `status.address`.
+  Ethereum account postoji na chain-u čim postoji keypair — može odmah da
+  prima uplate (Sepolia testnet).
+- **Adopcija** — kada je `spec.address` zadat, operator validira format i
+  preuzima adresu u `status.address`. `ShopReconciler` automatski kreira po
+  jedan Wallet za svaki Shop (adopcija `spec.walletAddress`).
+- **Balans** — operator periodično čita `eth_getBalance` (JSON-RPC; endpoint
+  preko env `ETH_RPC_URL`, default Sepolia publicnode) i upisuje ga u
+  `status.balance`.
+
 ```yaml
+# Kreiranje novog accounta (operator generiše keypair):
 apiVersion: shop.devops.io/v1alpha1
 kind: Wallet
 metadata:
   name: my-wallet
 spec:
-  address: "0x742d35Cc6634C0532925a3b844Bc9e7595f42e0"
   blockchain: ethereum
-  network: testnet
-  currency: USDT
+  network: sepolia
+  currency: ETH
+---
+# Adopcija postojećeg accounta:
+apiVersion: shop.devops.io/v1alpha1
+kind: Wallet
+metadata:
+  name: merchant-wallet
+spec:
+  address: "0x742d35Cc6634C0532925a3b844Bc9e7595f42e00"
+  blockchain: ethereum
+  network: sepolia
+  currency: ETH
 ```
+
+## Napomena: Redis operator (umesto REDB)
+
+Za `database: light` prodavnice koristi se open-source
+[OT-Container-Kit redis-operator](https://github.com/OT-CONTAINER-KIT/redis-operator)
+umesto REDB-a iz specifikacije: REDB je kontroler za **Redis Enterprise**
+(komercijalni proizvod sa licencom). Specifikacija izričito dozvoljava drugu
+bazu "ali je obavezno koristiti operator te baze" — Redis se ovde deployuje
+isključivo kroz CRD Redis operatora, ekvivalentno CNPG-u za PostgreSQL.
+
+## Integracioni testovi
+
+`make test-integration` podiže **pravi k3s klaster kroz Testcontainers**
+(§5.2), instalira CRD-ove i pokreće sve reconcilere:
+standard→2 replike / high→3, Service/Ingress/dashboard/PrometheusRule/
+DiscordChannel/Wallet po prodavnici, kreiranje wallet accounta (keypair
+Secret) i garbage-collection pri brisanju Shop-a. Zahteva pokrenut Docker.
 
 ## Deployment
 
