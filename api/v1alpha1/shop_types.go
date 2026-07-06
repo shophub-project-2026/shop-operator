@@ -35,7 +35,10 @@ func registerWallet(scheme *runtime.Scheme) error {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
 
 type Shop struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -45,10 +48,25 @@ type Shop struct {
 }
 
 type ShopSpec struct {
-	Availability  string `json:"availability,omitempty"`
+	// Availability tier: standard runs 2 replicas, high runs 3 (§1.2/§3.1).
+	// +kubebuilder:validation:Enum=standard;high
+	// +kubebuilder:default=standard
+	Availability string `json:"availability,omitempty"`
+	// WalletAddress is the merchant's Ethereum address that customer
+	// payments are sent to. Must be a 0x-prefixed 20-byte hex string
+	// (EIP-55 mixed case is accepted; checksum is not enforced here).
+	// +kubebuilder:validation:Pattern=`^0x[a-fA-F0-9]{40}$`
 	WalletAddress string `json:"walletAddress"`
-	Database      string `json:"database,omitempty"`
-	Image         string `json:"image,omitempty"`
+	// Database tier: standard deploys PostgreSQL (CNPG operator), light
+	// deploys Redis (Redis operator) — §1.2.
+	// +kubebuilder:validation:Enum=standard;light
+	// +kubebuilder:default=standard
+	Database string `json:"database,omitempty"`
+	Image    string `json:"image,omitempty"`
+	// NotificationWebhook is an optional Discord webhook URL. When set, the
+	// operator provisions a DiscordChannel plus an Alertmanager route so that
+	// this shop's alerts are delivered to its own Discord channel.
+	NotificationWebhook string `json:"notificationWebhook,omitempty"`
 }
 
 type ShopStatus struct {
@@ -113,6 +131,8 @@ func (sl *ShopList) DeepCopyObject() runtime.Object {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 
 type DiscordChannel struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -122,13 +142,30 @@ type DiscordChannel struct {
 }
 
 type DiscordChannelSpec struct {
-	WebhookURL  string `json:"webhookUrl"`
+	// ChannelName is the name of the Discord text channel the operator creates
+	// in the guild for this shop's notifications.
 	ChannelName string `json:"channelName,omitempty"`
+	// GuildID overrides the operator's default guild for this channel. When
+	// empty, the operator's configured DISCORD_GUILD_ID is used.
+	GuildID string `json:"guildId,omitempty"`
+	// WebhookURL is an optional manual override. When set, the operator skips
+	// bot-driven channel/webhook creation and routes to this URL directly,
+	// which lets a shop reuse a pre-existing Discord channel.
+	WebhookURL string `json:"webhookUrl,omitempty"`
 }
 
 type DiscordChannelStatus struct {
 	Status  string `json:"status,omitempty"`
 	Message string `json:"message,omitempty"`
+	// ChannelID is the Discord channel the operator created (empty when a manual
+	// WebhookURL override is used).
+	ChannelID string `json:"channelId,omitempty"`
+	// WebhookID is the Discord webhook created on the channel.
+	WebhookID string `json:"webhookId,omitempty"`
+	// WebhookURL is the resolved webhook alerts are delivered to — bot-created
+	// or taken from the spec override. Downstream resources (the per-shop Secret
+	// and AlertmanagerConfig) consume this value.
+	WebhookURL string `json:"webhookUrl,omitempty"`
 }
 
 func (dc *DiscordChannel) DeepCopyInto(out *DiscordChannel) {
@@ -183,6 +220,10 @@ func (dcl *DiscordChannelList) DeepCopyObject() runtime.Object {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Blockchain",type=string,JSONPath=`.spec.blockchain`
+// +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address`
 
 type Wallet struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -192,14 +233,21 @@ type Wallet struct {
 }
 
 type WalletSpec struct {
-	Address    string `json:"address"`
+	// Address is the blockchain account to adopt. When empty the operator
+	// CREATES a new account on the chain: it generates a keypair, stores it in
+	// the Secret <wallet-name>-keys and publishes the derived address in
+	// status.address (spec §3.1 — "Wallet: Kreira account na blockchain-u").
+	Address    string `json:"address,omitempty"`
 	Blockchain string `json:"blockchain"`
 	Network    string `json:"network,omitempty"`
 	Currency   string `json:"currency,omitempty"`
 }
 
 type WalletStatus struct {
-	Status  string `json:"status,omitempty"`
+	Status string `json:"status,omitempty"`
+	// Address is the account customers pay into: either adopted from
+	// spec.address or derived from the operator-generated keypair.
+	Address string `json:"address,omitempty"`
 	Balance string `json:"balance,omitempty"`
 	Message string `json:"message,omitempty"`
 }
