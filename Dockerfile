@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /workspace
 COPY go.mod go.mod
@@ -29,3 +29,4 @@ USER 65532:65532
 EXPOSE 8080
 
 ENTRYPOINT ["/manager"]
+

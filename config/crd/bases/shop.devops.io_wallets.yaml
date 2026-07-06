@@ -21,6 +21,9 @@ spec:
     - jsonPath: .spec.blockchain
       name: Blockchain
       type: string
+    - jsonPath: .status.address
+      name: Address
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -45,6 +48,11 @@ spec:
           spec:
             properties:
               address:
+                description: |-
+                  Blockchain account to adopt. When empty the operator CREATES a
+                  new account on the chain: it generates a keypair, stores it in
+                  the Secret <wallet-name>-keys and publishes the derived address
+                  in status.address.
                 type: string
               blockchain:
                 type: string
@@ -53,11 +61,15 @@ spec:
               network:
                 type: string
             required:
-            - address
             - blockchain
             type: object
           status:
             properties:
+              address:
+                description: |-
+                  Account customers pay into — adopted from spec.address or
+                  derived from the operator-generated keypair.
+                type: string
               balance:
                 type: string
               message:

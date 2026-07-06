@@ -48,8 +48,23 @@ spec:
           spec:
             properties:
               availability:
+                description: |-
+                  Application availability tier (spec §1.2/§3.1): standard runs
+                  2 replicas, high runs 3. Defaults to standard.
+                default: standard
+                enum:
+                - standard
+                - high
                 type: string
               database:
+                description: |-
+                  Database tier (spec §1.2): standard deploys PostgreSQL via the
+                  CNPG operator, light deploys Redis via the Redis operator.
+                  Defaults to standard.
+                default: standard
+                enum:
+                - standard
+                - light
                 type: string
               image:
                 type: string

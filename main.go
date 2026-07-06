@@ -72,9 +72,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Wallet accounts live on Ethereum Sepolia by default; ETH_RPC_URL lets a
+	// deployment point balance lookups at a different JSON-RPC endpoint.
+	rpcURL := os.Getenv("ETH_RPC_URL")
+	if rpcURL == "" {
+		rpcURL = "https://ethereum-sepolia-rpc.publicnode.com"
+	}
 	if err = (&controller.WalletReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Balances: controller.NewEthRPCClient(rpcURL),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create WalletReconciler")
 		os.Exit(1)
